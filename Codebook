@@ -1,0 +1,42 @@
+Unicorns Dataset Codebook
+
+Data collected for 118 Startups located in the United States with Unicorn Status (as of 12/04/2018). Original list of unicorn startups was provided by CBInsights (https://www.cbinsights.com/research-unicorn-companies). This list was updated and augmented with data collected manually from Crunchbase (https://www.crunchbase.com). 
+
+Included data is:
+the startup's name, 
+the startup's valuation (in billions US $), 
+the date where the startup closed its first funding round that gave it a unicorn valuation,
+the industry of the startup, 
+the number of companies the startup has fully acquired, 
+the number of investors or institutions that have invested in the startup, 
+the startup's total amount of funding (in hundreds of million US $),
+the startup's total number of funding rounds,
+the startup's number of listed founders,
+the year the startup was founded,
+
+other data included pertains to the 
+the chief founder, a founder that has either held or is current holding an executive position such as CEO, CTO, or chair of the company's board
+
+the other data includes:
+
+the chief founder's current age,
+the chief founder's most recently attended college, university, or other educational institution,
+the chief founder's most recent educational degree earned,
+the chief founder's number of past jobs or startups founded,
+the industry of the chief founder's previous job(s) or startup(s),
+the chief founder's race or ethnicity,
+the chief founder's listed net worth (if any),
+the chief founder's gender,
+
+and the total number of listed female founders in the startup
+
+also included are links to each startup's Crunchbase profile and each chief founder's Crunchbase profile 
+
+After data cleaning process, the listed net worth column was removed.
+ 
+New mutated variables:
+
+The number of years it takes for a startup to reach its unicorn status is calculated by subtracting the year it reached unicorn status from the year of the startup's formation.
+
+The age of a startup is calculated by subtracting the year of formation from 2018. 
+

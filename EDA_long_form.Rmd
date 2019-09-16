@@ -1,0 +1,639 @@
+---
+title: "EDA_long_form"
+author: "Peter Li"
+date: "December 5, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r, message = FALSE, echo = FALSE}
+# Loading package(s)
+library(tidyverse)
+library(ggplot2)
+library(tibble)
+library(dplyr)
+library(stringr)
+library(stringi)
+library(lubridate)
+library(magrittr)
+library(modelr)
+library(janitor)
+library(leaps)
+library(glmnet)
+library(pls)
+library(GGally)
+library(class)
+library(boot)
+library(corrplot)
+
+#Unicorns2 <- read_rds("Unicorns2.rds")
+Updated3 <- read_rds("Updated3.rds") # an updated version of Unicorns2 data set with revenue information
+
+Updated4 <- read_rds("Updated4.rds") # variant of Updated3 with some irrelevant predictors removed
+
+set.seed(667)
+```
+<br>
+
+In Stat 301-1, I conducted an EDA on a moderate-sized dataset of U.S. unicorn startups (non-public/IPO companies valued above $1 billion USD) and their founders. 
+
+In my original dataset I scraped data on unicorns' valuations and funding histories from Crunchbase. Separately, I manually gathered data on each founder's background through their personal website or biographies, etc. Variables that I examined included the founder's age when they started their unicorn startup, gender, education, and any previous work experience, etc. I found that the majority of founding teams consisted exclusively of white or Asian males. This was not unexpected but was a little surprising to see empirical data confirming this trend.
+
+My goal now is to revisit the data set and apply regression models to the dataset. This may help produce a model that can provide inferences to predict the valuation of startups that have significant but sub-unicorn valuations. This may also be of particular interest as startups often use the valuations of competitors as a threshold or justification for their own valuations. 
+
+From the results of the previous EDA and under the reasonable assumption that ultra-high valuations of a company are not significantly derived from the individual founders, the majority of the predictors related to founders and their backgrounds are removed from the data set. However, I included the track record predictor for a founder's number of past careers or organizations founded.    
+
+I updated my original dataset to reflect on the startups' most recent valuations and total funding. To further augment the data set, I gathered and added the most recent annual revenue information for each startup in the data set. I also scaled the predictors for each startup's annual revenue and total funding from being in millions to billions. This was done so the metrics would match the scale of each startup's most recent valuation in billions. 
+
+A challenge was finding accurate revenue information as private companies do not have to release their financial information to the public. Thus, the revenue information I found inherently had questionable accuracy. Another issue with data collection is the way companies report annual revenue. Companies such as PostMates or InstaCart count total sales on their platform as "revenue" (5, 6). However, the majority of that revenue belongs to the restaurants and stores that the companies are delivering from. Thus, the companies' actual revenue from delivery and service fees are much smaller than their reported revenue. Another caveat besides inflated revenue is that revenue is not a clear indicator of a company's financial health. A company can have large revenue but still fail if it does not generate a profit or is losing money. 
+
+Another concern was whether the metric of annual revenue is as consistent as the metrics of valuation and total funding. Valuation and total funding are cumulative numbers that theoretically should never decrease as time goes on. In contrast, a company's annual revenue can be lower than revenue of the previous years. Taking into account that a company's revenue generally cannot be treated the same as funding from investors, this overall concern is negligible.  
+
+```{r, echo = FALSE}
+#range(Updated4$valuation_b)
+
+ggplot(aes(x=factor(0), y = valuation_b), data = Updated4) +
+  geom_boxplot() + 
+  theme(axis.title.x=element_blank()) +
+  theme(axis.text.x = element_blank())
+
+ggplot(aes(x=factor(0), y = funding_b), data = Updated4) +
+  geom_boxplot() + 
+  theme(axis.title.x=element_blank()) +
+  theme(axis.text.x = element_blank())
+
+ggplot(aes(x=factor(0), y = revenue_b), data = Updated4) +
+  geom_boxplot() + 
+  theme(axis.title.x=element_blank()) +
+  theme(axis.text.x = element_blank())
+
+ggplot(aes(x=factor(0), y = acquistions), data = Updated4) +
+  geom_boxplot() + 
+  theme(axis.title.x=element_blank()) +
+  theme(axis.text.x = element_blank())
+
+#ggpairs(Updated4)
+
+ggplot(data = Updated3) + 
+  geom_point(mapping = aes(x = acquistions, y = valuation_b, color = industry) ) +
+  ggtitle("Acquistions vs valuation") 
+
+ggplot(data = Updated3) + 
+  geom_point(mapping = aes(x = revenue_b, y = valuation_b, color = industry) ) +
+  ggtitle("Annual revenue vs valuation") 
+
+ggplot(data = Updated3) + 
+  geom_point(mapping = aes(x = founder_track_record, y = valuation_b, color = industry) ) +
+  ggtitle("Founder track record vs valuation") 
+
+ggplot(data = Updated3) + 
+  geom_point(mapping = aes(x = funding_b, y = valuation_b, color = industry) ) +
+  ggtitle("Total funding vs valuation") 
+
+#ggpairs(Updated4)
+Updated4b <- Updated4 %>% select(-gender)
+cor(Updated4b)
+```
+
+The first step of my project after data collection and processing was another EDA. Examining the correlation matrix, the valuation variable has the highest absolute correlation values with the revenue and total funding predictors. The correlation matrix also shows strong positive correlation between the annual revenue and total funding variables. However, considering that some startups have funding without revenue neither predictor is considered redundant. Multicollinearity issues could exist but are likely to be insignificant if subset selection includes the correlated predictors. The scatterplots between the predictors and valuation variable also showed the annual revenue and total funding predictors having strong linear or possibly weak logarithmic relationships. 
+
+Due to the small size of the dataset, it was optimal and arguably necessary to implement dimensionality reduction. The curse of dimensionality limits the accuracy and usefulness of models derived from data sets where the number of observations is not significantly larger than the number of predictors. To reduce the dimensions of the data set I perform subset selection before fitting any models. I performed an exhaustive search with regression subset selection to find the five optimal predictors for predicting valuation. The subset selection returned with the annual revenue and total funding predictors having the highest adjusted R-squared values. The other predictors include the number of funding rounds, the number of years it took for the startup to reach unicorn status, and the age of the startup. 
+
+In addition to regression subset selection, lasso regression is performed as an alternate method for subset selection. The only predictors with non-zero coefficients after the lasso regression are the predictors for the startup's number of acquistions, annual revenue, and total funding. Principal chain regression and partial least squares regression are alternate methods for dimension reduction, however, they do not perform subset selection nor are advantageous for model interpretability.
+
+Results of regression subset selection with exhaustive search for best predictors to predict valuation response variable:
+```{r, echo = FALSE}
+u_validation <- tibble(train = Updated4 %>% sample_frac(0.60) %>% list(),
+                       test  = Updated4 %>% dplyr::setdiff(train) %>% list())
+
+#Updated4 %>% setdiff(u_validation %>% pluck("train", 1))
+
+#u_validation %>% pluck("test", 1)
+
+utrain <- u_validation %>%
+  unnest(train) %>%
+  as.data.frame()
+
+utest <- u_validation %>%
+  unnest(test) %>%
+  as.data.frame()
+
+#utest <- u_validation %>%
+ # pluck("test", 1) %>%
+  #as.data.frame()
+
+results <- regsubsets(valuation_b ~., data = Updated4, nvmax = 6) %>%
+  summary()
+
+results # results of regression subset selection with exhaustive search for best predictors to predict valuation response variable
+
+tibble(num_pred = 1:6,
+       rss = results$rss,
+       adjr2 = results$adjr2,
+       bic = results$bic) %>%
+  gather(key = "statistic", value = value, -num_pred)
+```
+
+The data set has 60% of observations randomly assigned to a train set, and the remaining observations assigned to a test set. A performance set cannot be effectively implemented due to the small size of the data set. 
+
+I apply linear regression to the subsets of predictors, followed by test set validation. The linear model from the first subset of five predictors performed well with a test MSE of approximately 0.19, while the second linear model from the lasso regression's subset of three predictors performed slightly worse with a test MSE of approximately 0.21. The test MSEs of 0.19 and 0.21 are close to zero and considering the range of the valuation predictor is from 1 to 68 billions of dollars, these linear models appear to be very accurate. 
+
+The models fitted from lasso regression, PCR, and PLSR methods returned higher MSEs in test set validation, with test MSEs ranging from 14.62 to 22.10. A preliminary evaluation of the polynomial regression with degrees ranging from 1 to 10 did not indicate that non-linear models would be more accurate than the previous models. 
+
+Linear regression on a subset consisting of predictors selected by lasso regression and their pairwise interaction terms return a test MSE that is very close to 0. The addition of the interaction term between the funding and revenue predictors appears to greatly improve the model to near-perfect accuracy. 
+
+Test MSE of first linear model with formula: "valuation_b ~ revenue_b + funding_b  + rounds + growth_years + age" : 
+
+```{r, echo = FALSE}
+#fmla1 <- "valuation_b ~ revenue_b + funding_b + acquistions + investors + rounds + founders + age"
+
+fmla1 <- "valuation_b ~ revenue_b + funding_b   + rounds + growth_years + age"
+
+lm1 <- lm(formula = fmla1, data = utrain)
+lm1_preds <- predict(lm1, utest)
+lm1_MSE <- mean(lm1_preds - utest$valuation_b)^2
+lm1_MSE # test MSE of first linear model with formula: "valuation_b ~ revenue_b + funding_b  + rounds + growth_years + age"
+```
+
+Bootstrap estimates of coefficients for first linear model with formula: "valuation_b ~ revenue_b + funding_b  + rounds + growth_years + age" : 
+```{r, echo = FALSE}
+
+utrain_boot <- utrain %>% 
+  bootstrap(1000, id = "boot_id") %>% 
+  mutate(model_fit = map(strap, ~ lm(formula = fmla1, data = .x)),
+         mod_tidy  = map(model_fit, broom::tidy)) 
+
+#utrain_boot %>% 
+#  unnest(mod_tidy) %>%
+ # group_by(term) %>% 
+  #select(term, estimate) %>% 
+  #skimr::skim() 
+
+utrain_boot %>%
+  unnest(mod_tidy) %>% 
+  group_by(term) %>% 
+  summarise(boot_est = mean(estimate),
+            est_se   = sd(estimate))
+
+utrain_boot %>% 
+  unnest(mod_tidy) %>%
+  ggplot(aes(x = "", y = estimate)) +
+    geom_boxplot() +
+    facet_wrap(. ~ term, scale = "free_x") +
+    coord_flip()
+```
+
+Results of lasso regression subset selection:
+```{r, echo = FALSE}
+lambdas <- 10^seq(10, -2, length=100)
+
+y <- u_validation %>% unnest(train) %>% pull(valuation_b)
+
+x2 <- u_validation %>% 
+  unnest(train) %>%
+  dplyr::select(-valuation_b) %>% 
+  data.matrix()
+
+x_test2 <- u_validation %>% 
+  unnest(test) %>%
+  dplyr::select(-valuation_b) %>% 
+  data.matrix()
+
+u_lasso <- cv.glmnet(x2, y, alpha = 1, lambda = lambdas, nfolds = 10)
+
+#u_lasso$lambda.1se # 
+#u_lasso$lambda.min # 
+
+coef(u_lasso, u_lasso$lambda.1se) #results of lasso regression subset selection 
+
+u_lasso_pred <- predict(u_lasso, s = u_lasso$lambda.1se, newx = x_test2)
+```
+
+Test MSE of lasso regression model:
+```{r, echo = FALSE}
+mean((u_lasso_pred-utest$valuation_b)^2) #test MSE of lasso regression model
+```
+
+
+Test MSE of second linear model with formula: "valuation_b ~ acquistions + funding_b + revenue_b" :
+```{r, echo = FALSE}
+######
+
+fmla2 <- "valuation_b ~ acquistions + funding_b + revenue_b"
+
+lm2 <- lm(formula = fmla2 , data = utrain) #perform linear least-squares regression on the predictors from the lasso regression's subset selection 
+lm2_preds <- predict(lm2, utest)
+lm2_MSE <- mean(lm2_preds - utest$valuation_b)^2
+lm2_MSE # test MSE of second linear model with formula: "valuation_b ~ acquistions + funding_b + revenue_b"
+```
+
+Test MSE of third linear model with formula: "valuation_b ~ acquistions + funding_b : revenue_b" :
+```{r, echo = FALSE}
+fmla3 <- "valuation_b ~ acquistions + funding_b : revenue_b" # MSE: 1.879463e-06
+lm3 <- lm(formula = fmla3 , data = utrain) 
+lm3_preds <- predict(lm3, utest)
+lm3_MSE <- mean(lm3_preds - utest$valuation_b)^2
+lm3_MSE  # test MSE of third linear model with formula: "valuation_b ~ acquistions + funding_b : revenue_b" 
+```
+
+Test MSE of fourth linear model with formula: "valuation_b ~ age_prop : acquistions + funding_b : revenue_b" :
+```{r, echo = FALSE}
+fmla3b <- "valuation_b ~ age_prop : acquistions + funding_b : revenue_b" #2.64775e-05
+
+lm3 <- lm(formula = fmla3b , data = utrain) 
+lm3_preds <- predict(lm3, utest)
+lm3_MSE <- mean(lm3_preds - utest$valuation_b)^2
+lm3_MSE # test MSE of fourth linear model with formula: "valuation_b ~ acquistions + funding_b : revenue_b" 
+
+
+#lm4 <- lm(formula = valuation_b ~ funding_b + revenue_b , data = utrain) 
+fmla4 <- "valuation_b ~ funding_b + revenue_b"
+```
+
+However, upon further scrutinizing the models with cross-validation the average test MSE of this "best" model is actually 1206, which is significantly higher and worse than the previous test MSE obtained using just a validation set. It appears now that the addition of the interaction terms actually do not improve the accuracy of the model. The first two linear models have average CV test MSEs of 23.5 and 29.6, which are also a lot higher than the test MSE calculated using test set validation. Using bootstrap resampling to estimate the MSE and the standard error of the estimates for the linear models may have been more accurate and reliable than using
+cross-validation. However, the models fitted to the data set would still have poor predictive performance.
+
+The PCR models do not fare better than the linear models when re-evaluated by cross-validation. One of the PLSR models has the lowest average CV test MSE of 21.6. Considering the distribution of the valuation variable, this MSE is still high and not desirable. 
+
+10-fold cross-validation of first linear model with formula "valuation_b ~ revenue_b + funding_b + rounds + growth_years + age" :
+```{r, echo = FALSE}
+# 10-fold cross-validation of linear models 
+u_10fold1 <- Updated4 %>% 
+  crossv_kfold(10, id = "fold") 
+
+u_10fold1 %>% 
+  mutate(model_fit = map2(fmla1, train, lm),
+         fold_mse = map2_dbl(model_fit, test, mse), 
+         average_mse = mean(fold_mse)) 
+```
+
+10-fold cross-validation of second linear model with formula "valuation_b ~ acquistions + funding_b + revenue_b" :
+```{r}
+u_10fold1 %>% 
+  mutate(model_fit = map2(fmla2, train, lm),
+         fold_mse = map2_dbl(model_fit, test, mse), 
+         average_mse = mean(fold_mse)) 
+```
+
+10-fold cross-validation of third linear model with formula "valuation_b ~ acquistions + funding_b : revenue_b" :
+```{r}
+u_10fold1 %>% 
+  mutate(model_fit = map2(fmla3, train, lm),
+         fold_mse = map2_dbl(model_fit, test, mse), 
+         average_mse = mean(fold_mse)) 
+```
+
+10-fold cross-validation of fourth linear model with formula "valuation_b ~ acquistions + funding_b : revenue_b" :
+```{r}
+u_10fold1 %>% 
+  mutate(model_fit = map2(fmla3b, train, lm),
+         fold_mse = map2_dbl(model_fit, test, mse), 
+         average_mse = mean(fold_mse)) 
+```
+
+10-fold cross-validation of fifth linear model with formula "valuation_b ~ funding_b + revenue_b" :
+```{r}
+u_10fold1 %>% 
+  mutate(model_fit = map2(fmla4, train, lm),
+         fold_mse = map2_dbl(model_fit, test, mse), 
+         average_mse = mean(fold_mse)) 
+```
+
+Bootstrap estimates of test MSE for first linear model with formula "valuation_b ~ revenue_b + funding_b + rounds + growth_years + age" :
+```{r, echo = FALSE}
+sv <- function(data1){
+   tibble(train = data1 %>% as_tibble() %>% sample_frac(0.60) %>% list(),
+                       test  = data1 %>% as_tibble() %>% dplyr::setdiff(train) %>% 
+            list())
+}
+unnest_test <- function(data1){
+  data1 %>% as_tibble() %>% unnest(test)
+}
+
+Updated4 %>% 
+  bootstrap(1000, id = "boot_id") %>% 
+  mutate(strap_validation = map(strap, ~sv(.x)),
+        model_fit = map(strap_validation, ~ lm(formula = fmla1, data = .x %>% 
+                                                 as_tibble() %>% unnest(train))),
+         strap_test = map(strap_validation, ~unnest_test(.x)),
+         strap_mse = map2_dbl(model_fit, strap_test, mse),
+         average_mse = mean(strap_mse),
+         est_se = sd(strap_mse)) %>%
+  select(strap_mse, average_mse, est_se)
+```
+
+Bootstrap estimates of test MSE of second linear model with formula "valuation_b ~ acquistions + funding_b + revenue_b" : 
+```{r, echo = FALSE}
+Updated4 %>% 
+  bootstrap(1000, id = "boot_id") %>% 
+  mutate(strap_validation = map(strap, ~sv(.x)),
+        model_fit = map(strap_validation, ~ lm(formula = fmla2, data = .x %>% 
+                                                 as_tibble() %>% unnest(train))),
+         strap_test = map(strap_validation, ~unnest_test(.x)),
+         strap_mse = map2_dbl(model_fit, strap_test, mse),
+         average_mse = mean(strap_mse),
+         est_se = sd(strap_mse)) %>%
+  select(strap_mse, average_mse, est_se)
+```
+
+Bootstrap estimates of test MSE of third linear model with formula "valuation_b ~ acquistions + funding_b : revenue_b" :
+```{r, echo = FALSE}
+Updated4 %>% 
+  bootstrap(1000, id = "boot_id") %>% 
+  mutate(strap_validation = map(strap, ~sv(.x)),
+        model_fit = map(strap_validation, ~ lm(formula = fmla3, data = .x %>% 
+                                                 as_tibble() %>% unnest(train))),
+         strap_test = map(strap_validation, ~unnest_test(.x)),
+         strap_mse = map2_dbl(model_fit, strap_test, mse),
+         average_mse = mean(strap_mse),
+         est_se = sd(strap_mse)) %>%
+  select(strap_mse, average_mse, est_se)
+```
+
+Bootstrap estimates of test MSE of fourth linear model with formula "valuation_b ~ acquistions + funding_b : revenue_b" :
+```{r, echo = FALSE}
+Updated4 %>% 
+  bootstrap(1000, id = "boot_id") %>% 
+  mutate(strap_validation = map(strap, ~sv(.x)),
+        model_fit = map(strap_validation, ~ lm(formula = fmla3b, data = .x %>% 
+                                                 as_tibble() %>% unnest(train))),
+         strap_test = map(strap_validation, ~unnest_test(.x)),
+         strap_mse = map2_dbl(model_fit, strap_test, mse),
+         average_mse = mean(strap_mse),
+         est_se = sd(strap_mse)) %>%
+  select(strap_mse, average_mse, est_se)
+```
+
+Bootstrap estimates of test MSE of fifth linear model with formula "valuation_b ~ funding_b + revenue_b" :
+```{r, echo = FALSE}
+Updated4 %>% 
+  bootstrap(1000, id = "boot_id") %>% 
+  mutate(strap_validation = map(strap, ~sv(.x)),
+        model_fit = map(strap_validation, ~ lm(formula = fmla4, data = .x %>% 
+                                                 as_tibble() %>% unnest(train))),
+         strap_test = map(strap_validation, ~unnest_test(.x)),
+         strap_mse = map2_dbl(model_fit, strap_test, mse),
+         average_mse = mean(strap_mse),
+         est_se = sd(strap_mse)) %>%
+  select(strap_mse, average_mse, est_se)
+```
+
+Test MSE and cross-validation for first PCR model with formula "valuation_b ~ acquistions + funding_b + revenue_b" :
+```{r, echo = FALSE}
+fmla_pcr <- valuation_b ~ acquistions + funding_b + revenue_b
+upcr <- pcr(fmla_pcr, data = utrain, scale = TRUE, validation = "CV")
+#upcr$ncomp
+
+upcr_pred <- predict(upcr, utest, ncomp = upcr$ncomp)
+
+mean((upcr_pred-utest$valuation_b)^2)
+
+
+u_10fold1 %>% 
+  mutate(model_fit = map(train, ~ pcr(formula = fmla_pcr, data = .x)),
+        # fold_pred = map2(model_fit, test, predict, ncomp = model_fit$ncomp),
+         fold_mse = map2_dbl(model_fit, test, mse),
+         #fold_mse = map(model_fit, ~ predict(model_fit, newdata = test, ncomp = model_fit$ncomp)))
+         average_mse = mean(fold_mse))
+```
+
+Test MSE and cross-validation for first PLSR model with formula "valuation_b ~ acquistions + funding_b + revenue_b" :
+```{r, echo = FALSE}
+uplsr <- plsr(fmla_pcr, data = utrain, scale = TRUE, validation = "CV")
+#upls$ncomp
+
+uplsr_pred <- predict(uplsr, utest, ncomp = uplsr$ncomp)
+
+mean((uplsr_pred-utest$valuation_b)^2)
+
+u_10fold1 %>% 
+  mutate(model_fit = map(train, ~ plsr(formula = fmla_pcr, data = .x)),
+        # fold_pred = map2(model_fit, test, predict, ncomp = model_fit$ncomp),
+         fold_mse = map2_dbl(model_fit, test, mse),
+         #fold_mse = map(model_fit, ~ predict(model_fit, newdata = test, ncomp = model_fit$ncomp)))
+         average_mse = mean(fold_mse))
+```
+
+Test MSE and cross-validation for second PCR model with formula "valuation_b ~ age_prop + acquistions + funding_b + revenue_b + rounds + growth_years " :
+```{r, echo = FALSE}
+fmla_pcr2 <- valuation_b ~ age_prop + acquistions + funding_b + revenue_b + rounds + growth_years 
+
+upcr2 <- pcr(fmla_pcr2, data = utrain, scale = TRUE, validation = "CV")
+#upcr$ncomp
+
+upcr_pred2 <- predict(upcr2, utest, ncomp = upcr2$ncomp)
+
+mean((upcr_pred2-utest$valuation_b)^2)
+
+u_10fold1 %>% 
+  mutate(model_fit = map(train, ~ pcr(formula = fmla_pcr2, data = .x)),
+        # fold_pred = map2(model_fit, test, predict, ncomp = model_fit$ncomp),
+         fold_mse = map2_dbl(model_fit, test, mse),
+         #fold_mse = map(model_fit, ~ predict(model_fit, newdata = test, ncomp = model_fit$ncomp)))
+         average_mse = mean(fold_mse))
+```
+
+Test MSE and cross-validation for second PLSR model with formula "valuation_b ~ age_prop + acquistions + funding_b + revenue_b + rounds + growth_years " :
+```{r, echo = FALSE}
+upls <- plsr(fmla_pcr2, data = utrain, scale = TRUE, validation = "CV")
+#upls$ncomp
+
+upls_pred <- predict(upls, utest, ncomp = upls$ncomp)
+
+mean((upls_pred-utest$valuation_b)^2)
+
+u_10fold1 %>% 
+  mutate(model_fit = map(train, ~ plsr(formula = fmla_pcr2, data = .x)),
+        # fold_pred = map2(model_fit, test, predict, ncomp = model_fit$ncomp),
+         fold_mse = map2_dbl(model_fit, test, mse),
+         #fold_mse = map(model_fit, ~ predict(model_fit, newdata = test, ncomp = model_fit$ncomp)))
+         average_mse = mean(fold_mse))
+```
+
+Test MSE and cross-validation for third PCR model with formula "valuation_b ~ age + funding_b + revenue_b + rounds + growth_years"  : 
+```{r, echo = FALSE}
+fmla_pcr3 <- valuation_b ~ age + funding_b + revenue_b + rounds + growth_years  
+
+upcr3 <- pcr(fmla_pcr3, data = utrain, scale = TRUE, validation = "CV")
+#upcr$ncomp
+
+upcr_pred3 <- predict(upcr3, utest, ncomp = upcr3$ncomp)
+
+mean((upcr_pred3-utest$valuation_b)^2)
+
+u_10fold1 %>% 
+  mutate(model_fit = map(train, ~ pcr(formula = fmla_pcr3, data = .x)),
+        # fold_pred = map2(model_fit, test, predict, ncomp = model_fit$ncomp),
+         fold_mse = map2_dbl(model_fit, test, mse),
+         #fold_mse = map(model_fit, ~ predict(model_fit, newdata = test, ncomp = model_fit$ncomp)))
+         average_mse = mean(fold_mse))
+
+```
+
+Cross-validation on third PLSR model with formula "valuation_b ~ age + funding_b + revenue_b + rounds + growth_years" :
+```{r, echo = FALSE}
+u_10fold1 %>% 
+  mutate(model_fit = map(train, ~ plsr(formula = fmla_pcr3, data = .x)),
+        # fold_pred = map2(model_fit, test, predict, ncomp = model_fit$ncomp),
+         fold_mse = map2_dbl(model_fit, test, mse),
+         #fold_mse = map(model_fit, ~ predict(model_fit, newdata = test, ncomp = model_fit$ncomp)))
+         average_mse = mean(fold_mse))
+```
+
+Cross-validation of polynomial regression on several predictors : 
+```{r, echo = FALSE}
+u_10fold <- u_validation %>% 
+  unnest(train) %>%
+  crossv_kfold(10, id = "fold")
+
+
+model_def <- tibble(degree = 1:8,
+                    fmla = str_c("valuation_b ~ poly(acquistions, ", degree, ")"))
+
+model_def2 <- tibble(degree = 1:7,
+                    fmla = str_c("valuation_b ~ poly(funding_b, ", degree, ")"))
+
+model_def3 <- tibble(degree = 1:7,
+                    fmla = str_c("valuation_b ~ poly(revenue_b, ", degree, ")"))
+
+model_def4 <- tibble(degree = 1:10,
+                    fmla = str_c("valuation_b ~ poly(rounds, ", degree, ")"))
+
+model_def5 <- tibble(degree = 1:10,
+                    fmla = str_c("valuation_b ~ poly(age, ", degree, ")"))
+```
+
+Polynomial regression of the acquisitions variable : 
+```{r, echo = FALSE}
+u_10fold2 <- u_10fold %>% 
+  crossing(model_def) %>% 
+  mutate(model_fit = map2(fmla, train, lm),
+         fold_mse = map2_dbl(model_fit, test, mse)) 
+  
+u_10fold2 %>% 
+  group_by(degree) %>% 
+  summarize(test_mse = mean(fold_mse))  %>%
+  arrange(test_mse)
+
+u_10fold2 %>% 
+  group_by(degree) %>% 
+  summarize(test_mse = mean(fold_mse)) %>%
+    ggplot(aes(x = degree, y = test_mse)) +
+      geom_line() +
+      geom_point()
+```
+
+Polynomial regression of the total funding variable : 
+```{r, echo = FALSE}
+u_10fold3 <- u_10fold %>% 
+  crossing(model_def2) %>% 
+  mutate(model_fit = map2(fmla, train, lm),
+         fold_mse = map2_dbl(model_fit, test, mse)) 
+
+u_10fold3 %>% 
+  group_by(degree) %>% 
+  summarize(test_mse = mean(fold_mse))  %>%
+  arrange(test_mse)
+
+u_10fold3 %>% 
+  group_by(degree) %>% 
+  summarize(test_mse = mean(fold_mse)) %>%
+    ggplot(aes(x = degree, y = test_mse)) +
+      geom_line() +
+      geom_point()
+```
+
+Polynomial regression of the annual revenue variable : 
+```{r, echo = FALSE}
+u_10fold4 <- u_10fold %>% 
+  crossing(model_def3) %>% 
+  mutate(model_fit = map2(fmla, train, lm),
+         fold_mse = map2_dbl(model_fit, test, mse)) 
+  
+u_10fold4 %>% 
+  group_by(degree) %>% 
+  summarize(test_mse = mean(fold_mse))  %>%
+  arrange(test_mse)
+
+u_10fold4 %>% 
+  group_by(degree) %>% 
+  summarize(test_mse = mean(fold_mse)) %>%
+    ggplot(aes(x = degree, y = test_mse)) +
+      geom_line() +
+      geom_point()
+```
+
+Polynomial regression of the rounds variable : 
+```{r, echo = FALSE}
+u_10fold5 <- u_10fold %>% 
+  crossing(model_def4) %>% 
+  mutate(model_fit = map2(fmla, train, lm),
+         fold_mse = map2_dbl(model_fit, test, mse)) 
+  
+u_10fold5 %>% 
+  group_by(degree) %>% 
+  summarize(test_mse = mean(fold_mse))  %>%
+  arrange(test_mse)
+
+u_10fold5 %>% 
+  group_by(degree) %>% 
+  summarize(test_mse = mean(fold_mse)) %>%
+    ggplot(aes(x = degree, y = test_mse)) +
+      geom_line() +
+      geom_point()
+```
+
+Polynomial regression of the age variable : 
+```{r, echo = FALSE}
+u_10fold6 <- u_10fold %>% 
+  crossing(model_def5) %>% 
+  mutate(model_fit = map2(fmla, train, lm),
+         fold_mse = map2_dbl(model_fit, test, mse)) 
+  
+u_10fold6 %>% 
+  group_by(degree) %>% 
+  summarize(test_mse = mean(fold_mse))  %>%
+  arrange(test_mse)
+
+u_10fold6 %>% 
+  group_by(degree) %>% 
+  summarize(test_mse = mean(fold_mse)) %>%
+    ggplot(aes(x = degree, y = test_mse)) +
+      geom_line() +
+      geom_point()
+```
+
+In my analysis of the small data set, I learned the importance and superiority of using cross-validation over just a test validation set. I did not focus on training MSE in my analysis as my focus was divided over the test MSE. Due to the small size of the data set overfitting is likely to have occurred and a training MSE that is significantly lower than the test MSE indicates just that. However, overfitting is not the largest issue if a model is inherently inaccurate. The data set is also notable for having outliers and observations with high leverage. Unicorn startups are inherently exceptional so it is not unexpected that some unicorns have higher valuations or other features than other unicorns. It is likely that some of these cases are just older unicorns who have had more years to raise more funding and revenue as well as increase their valuation. 
+
+
+At the end of this process, my goal changed from creating predictive models
+to inferential ones. The models statistically are not very accurate or precise. The models would perform poorly if used for the purpose of predicting a startup's future valuation. Valuations are often calculated and agreed to between investors and the startup, so there is a semi-arbitrary factor in determining exact valuations. However, inarguably, the models help to understand how factors such as revenue and funding drive the valuation of unicorns. 
+
+The models do make sense as companies need money to not only subsist but to grow. Money primarily flows into companies as funding from investors or revenue from customers. Therefore, it isn't suprising that startups with high valuations either have high revenue, high investment funding, or both.  
+ 
+If a company does not have enough money to pay employees and the bills, the company shutters. Hiring more employees or doing more advertising and marketing is also expensive. However, these are often necessary if a company wants to acquire or serve more customers. A company with more customers and market share can more likely command a higher valuation from investors. Of course, there are examples of companies with exemplary technologies and no revenue that are able to differentiate themselves and still receive high valuations. In fact, there's even one example of such a case in the data set. However, the majority of startups in the data set have high revenue, suggesting significant market share in their respective industries. Many startups that aggressively spend money on growth and capturing market share are not in the stage of profitability. Therefore, funding from investors often significantly subsidize the subsistence and growth of startups until the businesses reach profitability. 
+
+Considering the relationships above and the statistical model, it seems that the relationship between a unicorn's valuation and its annual revenue, total funding, etc likely consists of positive feedback loops. It can be postulated that for most startups the revenue from customers helps attract funding from investors, which then contributes to expanding operations and further increasing revenue streams to repeat the process at higher valuations. This loop may not apply to all companies in the data set, but it can be assumed that most business models have this loop. A positive feedback loop between predictors would suggest multicollinearity, however, removing either the annual revenue or total funding predictors negatively affects the accuracy of the model. Furthermore, the subset selection for lasso regression did not exclude the funding or revenue predictors as redundant or involved in multicollinearity.
+
+Improving the data set and the analysis would entail more data collection. More reliable metrics for accessing a company's financial health include profits, assets, debts, number of employees, etc. However, private companies make this information even more obscure and difficult to obtain than revenue information. Another caveat is that even adding more predictors will not improve a model if the data set still suffers from the curse of dimensionality. This means that the number of observations in the data set must be increased so that the number of observations is significantly larger than the number of predictors. Since the data set focuses on unicorn startups in the U.S. the limitation is that there are currently not more than ~ 100 unicorn startups in the U.S. If the scope of the project included international unicorn startups or U.S. startups with $500 million or higher valuations the data set would have more observations and no longer have dimensionality issues. 
+
+
+
+
+<br>
+<br>
+<br>
+Data collected for 117 Startups located in the United States with Unicorn Status (as of 03/09/2019). Original list of unicorn startups was provided by CBInsights (https://www.cbinsights.com/research-unicorn-companies). This list was updated and augmented with data collected manually from Crunchbase (https://www.crunchbase.com), Owler (https://www.owler.com), and Hoovers (https://www.hoovers.com). 
+
+Citations: 
+1. CB Insights (Firm). (2019). CB Insights. New York, NY: CB Insights. (https://www.cbinsights.com/research-unicorn-companies)
+2. Crunchbase. (2019). Crunchbase. U.S.A: Crunchbase Inc.
+3. Owler. (2019). Owler. San Mateo, California: Owler.
+(https://www.owler.com)
+4. Hoovers. (2019). D&B Hoovers. Austin, TX : D&B Hoovers. 
+(https://www.hoovers.com)
+5. PostMates. (2018). (https://postmates.com/EconomicImpactReport.pdf). 
+6. Biz Carson. Forbes. (2017). (https://www.forbes.com/sites/bizcarson/2017/11/08/amazon-whole-foods-deal-future-of-instacart-grocery-delivery/).
+
+
